@@ -149,7 +149,9 @@ def parse_and_write(response: str) -> list:
             if current_file and current_content:
                 write_file(current_file, "\n".join(current_content))
                 files.append(current_file)
-            current_file = line.strip().replace("---FILE:", "").replace("---", "").strip()
+            raw_name = line.strip().replace("---FILE:", "").replace("---", "").strip()
+            # Strip any directory prefix (LLM might include target/ or src/)
+            current_file = os.path.basename(raw_name)
             current_content = []
         elif line.strip() == "---END FILE---":
             if current_file and current_content:
