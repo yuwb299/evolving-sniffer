@@ -81,7 +81,13 @@ def evolve(iteration: int):
 ## Task:
 Plan ONE concrete improvement for this iteration. Then write the COMPLETE updated code files.
 
-IMPORTANT: Output format - for each file, use:
+IMPORTANT RULES:
+1. All files go directly in the target/ directory - NO subdirectories like src/ or tests/
+2. Source files: target/packet_structures.py, target/ethernet_parser.py, etc.
+3. Test files: target/test_packet_structures.py, target/test_ethernet_parser.py, etc.
+4. All imports should be relative to target/ (e.g., `from packet_structures import ...`)
+
+Output format - for each file, use:
 ---FILE: filename.py---
 (complete file content)
 ---END FILE---
@@ -97,15 +103,18 @@ If you're adding a new module, also keep all existing modules intact.
     files_written = parse_and_write(response)
     print(f"   Written {len(files_written)} files: {files_written}")
 
-    # Step 4: Generate tests if none exist
+    # Step 4: Run tests
     print("[4/6] 🧪 Running tests...")
     success, output = run_tests()
     print(f"   Test result: {'✅ PASS' if success else '❌ FAIL'}")
+    if not success:
+        print(f"   Test output (last 500 chars):\n{output[-500:]}")
 
     if not success:
         print(f"\n[5/6] 🔄 Tests failed, rolling back...")
-        # Git checkout to rollback
-        subprocess.run(["git", "checkout", "--", "target/"], cwd=os.path.dirname(__file__), capture_output=True)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        subprocess.run(["git", "checkout", "--", "target/"], cwd=script_dir, capture_output=True)
+        subprocess.run(["git", "clean", "-fd", "target/"], cwd=script_dir, capture_output=True)
         record(iteration, False, "Tests failed, rolled back", output[:500])
         print("   Rolled back successfully.")
         return False
