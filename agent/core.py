@@ -112,20 +112,18 @@ If you're adding a new module, also keep all existing modules intact.
 
     if not success:
         print(f"\n[5/6] 🔄 Tests failed, rolling back...")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        subprocess.run(["git", "checkout", "--", "target/"], cwd=script_dir, capture_output=True)
-        subprocess.run(["git", "clean", "-fd", "target/"], cwd=script_dir, capture_output=True)
+        proj_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        subprocess.run(["git", "checkout", "--", "target/"], cwd=proj_dir, capture_output=True)
+        subprocess.run(["git", "clean", "-fd", "target/"], cwd=proj_dir, capture_output=True)
         record(iteration, False, "Tests failed, rolled back", output[:500])
         print("   Rolled back successfully.")
         return False
 
-    # Step 5: Commit
-    print("[5/6] 📦 Committing changes...")
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    subprocess.run(["git", "add", "target/"], cwd=script_dir, capture_output=True)
+    proj_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    subprocess.run(["git", "add", "target/"], cwd=proj_dir, capture_output=True)
     commit_result = subprocess.run(
-        ["git", "commit", "-m", f"🧬 Auto evolution #{iteration} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"],
-        cwd=script_dir, capture_output=True, text=True,
+        ["git", "commit", "-m", f"\U0001f9b2 Auto evolution #{iteration} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"],
+        cwd=proj_dir, capture_output=True, text=True,
     )
     committed = commit_result.returncode == 0
     if committed:
@@ -179,10 +177,10 @@ if __name__ == "__main__":
     success = evolve(iteration)
 
     # Push to GitHub
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    proj_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     push_result = subprocess.run(
         ["git", "push", "origin", "HEAD"],
-        cwd=script_dir, capture_output=True, text=True,
+        cwd=proj_dir, capture_output=True, text=True,
     )
     print(f"\nGit push: {push_result.stdout.strip() or push_result.stderr.strip() or 'ok'}")
     print(f"\n{'✅' if success else '❌'} Iteration #{iteration} {'succeeded' if success else 'failed'}")
