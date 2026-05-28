@@ -89,4 +89,68 @@ def parse_ip_header(data: bytes) -> Optional[IPHeader]:
         # Source IP (bytes 12-15)
         source_ip = ip_bytes_to_str(data[12:16])
         
-        # Destination IP (bytes 
+        # Destination IP (bytes 16-19)
+        destination_ip = ip_bytes_to_str(data[16:20])
+        
+        # Parse options if present
+        options = b''
+        header_length = ihl * 4
+        if header_length > 20 and len(data) >= header_length:
+            options = data[20:header_length]
+        
+        return IPHeader(
+            version=version,
+            ihl=ihl,
+            dscp=dscp,
+            ecn=ecn,
+            total_length=total_length,
+            identification=identification,
+            flags=flags,
+            fragment_offset=fragment_offset,
+            ttl=ttl,
+            protocol=protocol,
+            header_checksum=header_checksum,
+            source_ip=source_ip,
+            destination_ip=destination_ip,
+            options=options
+        )
+    except (struct.error, ValueError, IndexError):
+        return None
+
+
+def get_protocol_name(protocol: int) -> str:
+    """
+    Get the human-readable name for an IP protocol number.
+    
+    Common IP protocols:
+    - 1: ICMP
+    - 2: IGMP
+    - 6: TCP
+    - 17: UDP
+    - 41: IPv6 encapsulation
+    - 89: OSPF
+    
+    Args:
+        protocol: IP protocol number
+        
+    Returns:
+        Human-readable protocol name or hex string if unknown
+    """
+    protocols = {
+        1: "ICMP",
+        2: "IGMP",
+        4: "IP-in-IP",
+        6: "TCP",
+        8: "EGP",
+        9: "IGP",
+        17: "UDP",
+        41: "IPv6",
+        47: "GRE",
+        50: "ESP",
+        51: "AH",
+        88: "EIGRP",
+        89: "OSPF",
+        115: "L2TP",
+        132: "SCTP",
+    }
+    return protocols.get(protocol, f"Protocol-{protocol}")
