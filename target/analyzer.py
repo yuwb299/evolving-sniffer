@@ -12,12 +12,13 @@ from typing import Optional
 from capture_engine import LiveCapture, CaptureError
 from pcap_reader import PcapReader, PcapReaderError
 from packet_processor import process_packet
+from statistics import PacketStatistics
 
 
 class AnalyzerController:
     """
     Controller for the protocol analyzer.
-    Manages the capture loop and user display.
+    Manages the capture loop, statistics gathering, and user display.
     """
     
     def __init__(self, interface: Optional[str] = None, pcap_file: Optional[str] = None):
@@ -37,6 +38,7 @@ class AnalyzerController:
         self.interface = interface
         self.pcap_file = pcap_file
         self.running = True
+        self.stats = PacketStatistics()
         
         # Setup signal handler for graceful exit (Ctrl+C)
         signal.signal(signal.SIGINT, self._handle_signal)
@@ -66,6 +68,9 @@ class AnalyzerController:
                         # Process packet
                         packet = process_packet(raw_data)
                         
+                        # Update statistics
+                        self.stats.update(packet)
+                        
                         # Display summary
                         self._display_packet(packet)
                         
@@ -75,6 +80,9 @@ class AnalyzerController:
                     except RuntimeError:
                         # Socket closed
                         break
+
+                # Display statistics at the end
+                print(self.stats.get_report())
                         
         except PermissionError:
             print("[!] Permission denied. Please run with sudo/root privileges.", file=sys.stderr)
@@ -96,10 +104,12 @@ class AnalyzerController:
                         break
                         
                     packet = process_packet(raw_data)
+                    self.stats.update(packet)
                     self._display_packet(packet)
                     packet_count += 1
-                    
-                print("-" * 80)
+                
+                # Display statistics
+                print(self.stats.get_report())
                 print(f"[*] Analysis complete. Total packets processed: {packet_count}")
                 
         except FileNotFoundError:
