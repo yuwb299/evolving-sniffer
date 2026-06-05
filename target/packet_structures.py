@@ -1,10 +1,10 @@
 """
 Packet structures using dataclasses for the protocol analyzer.
-Defines the data models for Ethernet, IP, TCP, and UDP packets.
+Defines the data models for Ethernet, IP, TCP, UDP, and HTTP packets.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime
 
 
@@ -141,12 +141,34 @@ class UDPHeader:
 
 
 @dataclass
+class HTTPRequest:
+    """Represents an HTTP Request."""
+    method: str
+    path: str
+    version: str
+    headers: Dict[str, str] = field(default_factory=dict)
+    body: bytes = b''
+
+
+@dataclass
+class HTTPResponse:
+    """Represents an HTTP Response."""
+    version: str
+    status_code: int
+    status_text: str
+    headers: Dict[str, str] = field(default_factory=dict)
+    body: bytes = b''
+
+
+@dataclass
 class Packet:
     """Represents a fully parsed packet with all layers."""
     ethernet: Optional[EthernetFrame] = None
     ip: Optional[IPHeader] = None
     tcp: Optional[TCPHeader] = None
     udp: Optional[UDPHeader] = None
+    http_request: Optional[HTTPRequest] = None
+    http_response: Optional[HTTPResponse] = None
     raw_data: bytes = b''
     
     @property
@@ -162,6 +184,8 @@ class Packet:
     @property
     def protocol_type(self) -> str:
         """Get the highest layer protocol type."""
+        if self.http_request or self.http_response:
+            return "HTTP"
         if self.tcp:
             return "TCP"
         elif self.udp:
@@ -188,6 +212,14 @@ class Packet:
                 parts.append(f"Flags: {' '.join(self.tcp.flag_names)}")
         elif self.udp:
             parts.append(f"UDP: {self.udp.source_port} -> {self.udp.destination_port}")
+
+        if self.http_request:
+            parts.append(f"HTTP Request: {self.http_request.method} {self.http_request.path}")
+            if "Host" in self.http_request.headers:
+                parts.append(f"Host: {self.http_request.headers['Host']}")
+        
+        if self.http_response:
+            parts.append(f"HTTP Response: {self.http_response.version} {self.http_response.status_code} {self.http_response.status_text}")
         
         return " | ".join(parts)
     

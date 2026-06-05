@@ -8,11 +8,12 @@ from packet_structures import Packet
 from ethernet_parser import parse_ethernet_frame
 from ip_parser import parse_ip_header
 from tcp_udp_parser import parse_tcp_header, parse_udp_header
+from http_parser import parse_http_request, parse_http_response, is_http_payload
 
 
 def process_packet(raw_data: bytes) -> Packet:
     """
-    Process raw packet bytes through the parsing stack (Ethernet -> IP -> TCP/UDP).
+    Process raw packet bytes through the parsing stack (Ethernet -> IP -> TCP/UDP -> HTTP).
     
     Args:
         raw_data: Raw bytes captured from the network interface or pcap file.
@@ -51,12 +52,37 @@ def process_packet(raw_data: bytes) -> Packet:
         # Malformed packet: payload shorter than header claims
         return packet
     
-    ip_payload = eth_frame.payload[ip_header_length:]
+    ip_payload = ethernet_payload = eth_frame.payload[ip_header_length:]
     
     # 3. Parse Transport Layer (TCP or UDP)
     if ip_header.protocol == 6:  # TCP
         tcp_header = parse_tcp_header(ip_payload)
         packet.tcp = tcp_header
+        
+        # 4. Parse HTTP (Phase 2) if TCP exists
+        if tcp_header:
+            # Calculate TCP payload start
+            tcp_header_length = tcp_header.data_offset * 4
+            if len(ip_payload) >= tcp_header_length:
+                tcp_payload = ip_payload[tcp_header_length:]
+                
+                # Heuristic: Port 80, 8080, 8000 or payload starts with HTTP markers
+                is_http_port = tcp_header.destination_port in [80, 8080, 8000] or \
+                               tcp_header.source_port in [80, 8080, 8000]
+                
+                if is_http_port or is_http_payload(tcp_payload):
+                    # Try parsing as Request
+                    # Requests usually go TO port 80/8080
+                    if tcp_header.destination_port in [80, 8080, 8000] or \
+                       (tcp_payload.startswith(b"GET ") or tcp_payload.startswith(b"POST")):
+                        packet.http_request = parse_http_request(tcp_payload)
+                    
+                    # Try parsing as Response
+                    # Responses usually come FROM port 80/8080
+                    elif tcp_header.source_port in [80, 8080, 8000] or \
+                         tcp_payload.startswith(b"HTTP/"):
+                        packet.http_response = parse_http_response(tcp_payload)
+                        
     elif ip_header.protocol == 17:  # UDP
         udp_header = parse_udp_header(ip_payload)
         packet.udp = udp_header
