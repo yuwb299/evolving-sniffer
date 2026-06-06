@@ -1,10 +1,10 @@
 """
 Packet structures using dataclasses for the protocol analyzer.
-Defines the data models for Ethernet, IP, TCP, UDP, and HTTP packets.
+Defines the data models for Ethernet, IP, TCP, UDP, HTTP, and DNS packets.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 from datetime import datetime
 
 
@@ -161,6 +161,81 @@ class HTTPResponse:
 
 
 @dataclass
+class DNSHeader:
+    """Represents a DNS message header."""
+    id: int
+    flags: int
+    qd_count: int
+    an_count: int
+    ns_count: int
+    ar_count: int
+
+    @property
+    def is_response(self) -> bool:
+        """True if QR (Query/Response) flag is set (1)."""
+        return bool(self.flags & 0x8000)
+
+    @property
+    def opcode(self) -> int:
+        """Opcode (4 bits)."""
+        return (self.flags >> 11) & 0x0F
+
+    @property
+    def is_authoritative(self) -> bool:
+        """True if AA (Authoritative Answer) flag is set."""
+        return bool(self.flags & 0x0400)
+
+    @property
+    def is_truncated(self) -> bool:
+        """True if TC (Truncated) flag is set."""
+        return bool(self.flags & 0x0200)
+
+    @property
+    def recursion_desired(self) -> bool:
+        """True if RD (Recursion Desired) flag is set."""
+        return bool(self.flags & 0x0100)
+
+    @property
+    def recursion_available(self) -> bool:
+        """True if RA (Recursion Available) flag is set."""
+        return bool(self.flags & 0x0080)
+
+    @property
+    def response_code(self) -> int:
+        """Response Code (RCODE) - 4 bits."""
+        return self.flags & 0x000F
+
+
+@dataclass
+class DNSQuestion:
+    """Represents a DNS Question section entry."""
+    qname: str  # e.g., "www.example.com"
+    qtype: int  # Type of record (A=1, AAAA=28, etc.)
+    qclass: int # Class (usually IN=1)
+
+
+@dataclass
+class DNSResourceRecord:
+    """Represents a DNS Resource Record (Answer, Authority, Additional)."""
+    name: str
+    type: int
+    class_: int
+    ttl: int
+    rdlength: int
+    rdata: bytes # Raw data of the record (e.g. IP address)
+
+
+@dataclass
+class DNSMessage:
+    """Represents a complete DNS message."""
+    header: DNSHeader
+    questions: List[DNSQuestion]
+    answers: List[DNSResourceRecord]
+    authorities: List[DNSResourceRecord]
+    additionals: List[DNSResourceRecord]
+
+
+@dataclass
 class Packet:
     """Represents a fully parsed packet with all layers."""
     ethernet: Optional[EthernetFrame] = None
@@ -169,6 +244,7 @@ class Packet:
     udp: Optional[UDPHeader] = None
     http_request: Optional[HTTPRequest] = None
     http_response: Optional[HTTPResponse] = None
+    dns: Optional[DNSMessage] = None
     raw_data: bytes = b''
     
     @property
@@ -184,6 +260,8 @@ class Packet:
     @property
     def protocol_type(self) -> str:
         """Get the highest layer protocol type."""
+        if self.dns:
+            return "DNS"
         if self.http_request or self.http_response:
             return "HTTP"
         if self.tcp:
@@ -213,6 +291,13 @@ class Packet:
         elif self.udp:
             parts.append(f"UDP: {self.udp.source_port} -> {self.udp.destination_port}")
 
+        if self.dns:
+            q_type = "Query" if not self.dns.header.is_response else "Response"
+            qname = ""
+            if self.dns.questions:
+                qname = f" {self.dns.questions[0].qname}"
+            parts.append(f"DNS {q_type}:{qname}")
+            
         if self.http_request:
             parts.append(f"HTTP Request: {self.http_request.method} {self.http_request.path}")
             if "Host" in self.http_request.headers:

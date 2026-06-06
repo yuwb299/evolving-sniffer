@@ -19,6 +19,7 @@ class PacketStatistics:
     tcp_packets: int = 0
     udp_packets: int = 0
     http_packets: int = 0
+    dns_packets: int = 0
     
     # Track other EtherTypes if desired, currently just keeping basic counters
     other_protocols: int = 0
@@ -54,6 +55,9 @@ class PacketStatistics:
             
         if packet.http_request or packet.http_response:
             self.http_packets += 1
+            
+        if packet.dns:
+            self.dns_packets += 1
 
     def get_report(self) -> str:
         """
@@ -80,12 +84,15 @@ class PacketStatistics:
                 lines.append(f"     -> TCP           : {self.tcp_packets} ({tcp_percent:.1f}%)")
                 lines.append(f"     -> UDP           : {self.udp_packets} ({udp_percent:.1f}%)")
                 
-                if self.tcp_packets > 0 or self.udp_packets > 0:
-                    # HTTP usually runs over TCP, but we check total HTTP packets
+                if self.udp_packets > 0:
+                    dns_percent = (self.dns_packets / self.udp_packets) * 100
+                    lines.append(f"        -> DNS       : {self.dns_packets} ({dns_percent:.1f}%)")
+                
+                if self.tcp_packets > 0:
+                    # HTTP usually runs over TCP
                     http_count = self.http_packets
-                    total_transport = self.tcp_packets + self.udp_packets
-                    http_percent = (http_count / total_transport) * 100 if total_transport > 0 else 0
-                    lines.append(f"        -> HTTP       : {http_count}")
+                    http_percent = (http_count / self.tcp_packets) * 100
+                    lines.append(f"        -> HTTP      : {http_count} ({http_percent:.1f}%)")
         
         if self.other_protocols > 0:
             lines.append(f"Other/Unknown Protocols : {self.other_protocols}")

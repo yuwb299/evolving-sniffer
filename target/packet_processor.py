@@ -9,11 +9,12 @@ from ethernet_parser import parse_ethernet_frame
 from ip_parser import parse_ip_header
 from tcp_udp_parser import parse_tcp_header, parse_udp_header
 from http_parser import parse_http_request, parse_http_response, is_http_payload
+from dns_parser import parse_dns_message
 
 
 def process_packet(raw_data: bytes) -> Packet:
     """
-    Process raw packet bytes through the parsing stack (Ethernet -> IP -> TCP/UDP -> HTTP).
+    Process raw packet bytes through the parsing stack (Ethernet -> IP -> TCP/UDP -> HTTP/DNS).
     
     Args:
         raw_data: Raw bytes captured from the network interface or pcap file.
@@ -52,7 +53,7 @@ def process_packet(raw_data: bytes) -> Packet:
         # Malformed packet: payload shorter than header claims
         return packet
     
-    ip_payload = ethernet_payload = eth_frame.payload[ip_header_length:]
+    ip_payload = eth_frame.payload[ip_header_length:]
     
     # 3. Parse Transport Layer (TCP or UDP)
     if ip_header.protocol == 6:  # TCP
@@ -86,5 +87,18 @@ def process_packet(raw_data: bytes) -> Packet:
     elif ip_header.protocol == 17:  # UDP
         udp_header = parse_udp_header(ip_payload)
         packet.udp = udp_header
+        
+        # 4. Parse DNS (Phase 3) if UDP exists
+        if udp_header:
+            # Calculate UDP payload start
+            # UDP header is 8 bytes
+            if len(ip_payload) >= 8:
+                udp_payload = ip_payload[8:]
+                
+                # DNS is typically on port 53
+                is_dns_port = udp_header.destination_port == 53 or udp_header.source_port == 53
+                
+                if is_dns_port:
+                    packet.dns = parse_dns_message(udp_payload)
     
     return packet
