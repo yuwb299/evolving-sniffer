@@ -6,7 +6,8 @@ import pytest
 from packet_structures import (
     EthernetFrame, IPHeader, TCPHeader, UDPHeader, Packet,
     DNSHeader, DNSQuestion, DNSResourceRecord, DNSMessage,
-    HTTPRequest, HTTPResponse
+    HTTPRequest, HTTPResponse,
+    TLSRecord, TLSHandshake
 )
 
 
@@ -168,6 +169,34 @@ class TestDNSMessage:
         assert msg.questions[0].qname == "example.com"
 
 
+class TestTLSRecord:
+    """Tests for TLSRecord dataclass."""
+    
+    def test_handshake_record(self):
+        rec = TLSRecord(content_type=22, version=0x0303, length=100, payload=b"x"*100)
+        assert rec.get_content_type_name() == "Handshake"
+        assert rec.get_version_name() == "TLS 1.2"
+        
+    def test_application_data(self):
+        rec = TLSRecord(content_type=23, version=0x0301, length=50, payload=b"data")
+        assert rec.get_content_type_name() == "Application Data"
+        assert rec.get_version_name() == "TLS 1.0"
+
+
+class TestTLSHandshake:
+    """Tests for TLSHandshake dataclass."""
+    
+    def test_client_hello(self):
+        hs = TLSHandshake(handshake_type=1, length=50, payload=b"chello", sni="example.com")
+        assert hs.get_handshake_type_name() == "Client Hello"
+        assert hs.sni == "example.com"
+        
+    def test_server_hello(self):
+        hs = TLSHandshake(handshake_type=2, length=40, payload=b"shello")
+        assert hs.get_handshake_type_name() == "Server Hello"
+        assert hs.sni is None
+
+
 class TestPacket:
     """Tests for Packet dataclass."""
     
@@ -184,6 +213,14 @@ class TestPacket:
         )
         pkt = Packet(dns=dns)
         assert pkt.protocol_type == "DNS"
+
+    def test_tls_packet_type(self):
+        """Test TLS packet detection."""
+        tls_rec = TLSRecord(content_type=22, version=0x0303, length=10, payload=b"handshake")
+        tls_hs = TLSHandshake(handshake_type=1, length=10, payload=b"hello", sni="test.com")
+        pkt = Packet(tls_record=tls_rec, tls_handshake=tls_hs)
+        assert pkt.protocol_type == "TLS"
+        assert "SNI: test.com" in pkt.summary()
 
     def test_packet_summary_dns(self):
         """Test summary generation includes DNS info."""

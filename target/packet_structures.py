@@ -1,6 +1,6 @@
 """
 Packet structures using dataclasses for the protocol analyzer.
-Defines the data models for Ethernet, IP, TCP, UDP, HTTP, and DNS packets.
+Defines the data models for Ethernet, IP, TCP, UDP, HTTP, DNS, and TLS packets.
 """
 
 from dataclasses import dataclass, field
@@ -236,6 +236,70 @@ class DNSMessage:
 
 
 @dataclass
+class TLSRecord:
+    """Represents a TLS Record Layer header."""
+    content_type: int
+    version: int
+    length: int
+    payload: bytes
+
+    # Content Types
+    CHANGE_CIPHER_SPEC = 20
+    ALERT = 21
+    HANDSHAKE = 22
+    APPLICATION_DATA = 23
+
+    def get_content_type_name(self) -> str:
+        names = {
+            20: "Change Cipher Spec",
+            21: "Alert",
+            22: "Handshake",
+            23: "Application Data"
+        }
+        return names.get(self.content_type, f"Unknown({self.content_type})")
+
+    def get_version_name(self) -> str:
+        if self.version == 0x0300: return "SSL 3.0"
+        if self.version == 0x0301: return "TLS 1.0"
+        if self.version == 0x0302: return "TLS 1.1"
+        if self.version == 0x0303: return "TLS 1.2"
+        if self.version == 0x0304: return "TLS 1.3"
+        return f"Unknown(0x{self.version:04x})"
+
+
+@dataclass
+class TLSHandshake:
+    """Represents a TLS Handshake message."""
+    handshake_type: int
+    length: int
+    payload: bytes
+    sni: Optional[str] = None # Extracted if ClientHello
+
+    # Handshake Types
+    HELLO_REQUEST = 0
+    CLIENT_HELLO = 1
+    SERVER_HELLO = 2
+    CERTIFICATE = 11
+    SERVER_KEY_EXCHANGE = 12
+    SERVER_HELLO_DONE = 14
+    CLIENT_KEY_EXCHANGE = 16
+    FINISHED = 20
+
+    def get_handshake_type_name(self) -> str:
+        names = {
+            0: "Hello Request",
+            1: "Client Hello",
+            2: "Server Hello",
+            11: "Certificate",
+            12: "Server Key Exchange",
+            14: "Server Hello Done",
+            16: "Client Key Exchange",
+            20: "Finished"
+        }
+        return names.get(self.handshake_type, f"Unknown({self.handshake_type})")
+
+
+@dataclass
 class Packet:
     """Represents a fully parsed packet with all layers."""
     ethernet: Optional[EthernetFrame] = None
@@ -245,6 +309,8 @@ class Packet:
     http_request: Optional[HTTPRequest] = None
     http_response: Optional[HTTPResponse] = None
     dns: Optional[DNSMessage] = None
+    tls_record: Optional[TLSRecord] = None
+    tls_handshake: Optional[TLSHandshake] = None
     raw_data: bytes = b''
     
     @property
@@ -260,6 +326,10 @@ class Packet:
     @property
     def protocol_type(self) -> str:
         """Get the highest layer protocol type."""
+        if self.tls_handshake:
+            return "TLS"
+        if self.tls_record:
+            return "TLS"
         if self.dns:
             return "DNS"
         if self.http_request or self.http_response:
@@ -290,6 +360,15 @@ class Packet:
                 parts.append(f"Flags: {' '.join(self.tcp.flag_names)}")
         elif self.udp:
             parts.append(f"UDP: {self.udp.source_port} -> {self.udp.destination_port}")
+
+        if self.tls_record:
+            if self.tls_handshake:
+                h_type = self.tls_handshake.get_handshake_type_name()
+                parts.append(f"TLS: {self.tls_record.get_version_name()} | {h_type}")
+                if self.tls_handshake.sni:
+                    parts.append(f"SNI: {self.tls_handshake.sni}")
+            else:
+                parts.append(f"TLS: {self.tls_record.get_version_name()} | {self.tls_record.get_content_type_name()}")
 
         if self.dns:
             q_type = "Query" if not self.dns.header.is_response else "Response"

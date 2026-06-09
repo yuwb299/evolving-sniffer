@@ -10,11 +10,12 @@ from ip_parser import parse_ip_header
 from tcp_udp_parser import parse_tcp_header, parse_udp_header
 from http_parser import parse_http_request, parse_http_response, is_http_payload
 from dns_parser import parse_dns_message
+from tls_parser import parse_tls_record, parse_tls_handshake
 
 
 def process_packet(raw_data: bytes) -> Packet:
     """
-    Process raw packet bytes through the parsing stack (Ethernet -> IP -> TCP/UDP -> HTTP/DNS).
+    Process raw packet bytes through the parsing stack (Ethernet -> IP -> TCP/UDP -> HTTP/DNS/TLS).
     
     Args:
         raw_data: Raw bytes captured from the network interface or pcap file.
@@ -60,29 +61,38 @@ def process_packet(raw_data: bytes) -> Packet:
         tcp_header = parse_tcp_header(ip_payload)
         packet.tcp = tcp_header
         
-        # 4. Parse HTTP (Phase 2) if TCP exists
+        # Calculate TCP payload start
         if tcp_header:
-            # Calculate TCP payload start
             tcp_header_length = tcp_header.data_offset * 4
             if len(ip_payload) >= tcp_header_length:
                 tcp_payload = ip_payload[tcp_header_length:]
                 
-                # Heuristic: Port 80, 8080, 8000 or payload starts with HTTP markers
-                is_http_port = tcp_header.destination_port in [80, 8080, 8000] or \
-                               tcp_header.source_port in [80, 8080, 8000]
+                # 4. Parse TLS (Phase 4) - Check for HTTPS (Port 443) or TLS Record Header
+                is_tls_port = tcp_header.destination_port == 443 or tcp_header.source_port == 443
+                # Heuristic: TLS Handshake starts with 0x16 (Handshake), 0x03 0x?? (SSL/TLS)
+                is_tls_magic = len(tcp_payload) > 3 and tcp_payload[0] == 0x16 and tcp_payload[1] == 0x03
                 
-                if is_http_port or is_http_payload(tcp_payload):
-                    # Try parsing as Request
-                    # Requests usually go TO port 80/8080
-                    if tcp_header.destination_port in [80, 8080, 8000] or \
-                       (tcp_payload.startswith(b"GET ") or tcp_payload.startswith(b"POST")):
-                        packet.http_request = parse_http_request(tcp_payload)
+                if is_tls_port or is_tls_magic:
+                    packet.tls_record = parse_tls_record(tcp_payload)
+                    if packet.tls_record and packet.tls_record.content_type == TLSRecord.HANDSHAKE:
+                        packet.tls_handshake = parse_tls_handshake(packet.tls_record.payload)
+
+                # 4. Parse HTTP (Phase 2) if TLS is not present or failed
+                # Note: We skip HTTP parsing if TLS record was found, assuming it's encrypted or tunneled
+                if not packet.tls_record:
+                    is_http_port = tcp_header.destination_port in [80, 8080, 8000] or \
+                                   tcp_header.source_port in [80, 8080, 8000]
                     
-                    # Try parsing as Response
-                    # Responses usually come FROM port 80/8080
-                    elif tcp_header.source_port in [80, 8080, 8000] or \
-                         tcp_payload.startswith(b"HTTP/"):
-                        packet.http_response = parse_http_response(tcp_payload)
+                    if is_http_port or is_http_payload(tcp_payload):
+                        # Try parsing as Request
+                        if tcp_header.destination_port in [80, 8080, 8000] or \
+                           (tcp_payload.startswith(b"GET ") or tcp_payload.startswith(b"POST")):
+                            packet.http_request = parse_http_request(tcp_payload)
+                        
+                        # Try parsing as Response
+                        elif tcp_header.source_port in [80, 8080, 8000] or \
+                             tcp_payload.startswith(b"HTTP/"):
+                            packet.http_response = parse_http_response(tcp_payload)
                         
     elif ip_header.protocol == 17:  # UDP
         udp_header = parse_udp_header(ip_payload)
