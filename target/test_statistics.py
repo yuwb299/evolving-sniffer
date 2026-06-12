@@ -4,7 +4,8 @@ Tests for statistics module.
 
 import pytest
 from packet_structures import (
-    Packet, EthernetFrame, IPHeader, TCPHeader, UDPHeader, HTTPRequest, HTTPResponse
+    Packet, EthernetFrame, IPHeader, TCPHeader, UDPHeader, HTTPRequest, HTTPResponse,
+    TLSRecord, TLSHandshake, FTPCommand, FTPResponse
 )
 from statistics import PacketStatistics
 
@@ -18,6 +19,8 @@ class TestPacketStatistics:
         assert stats.total_packets == 0
         assert stats.ipv4_packets == 0
         assert stats.tcp_packets == 0
+        assert stats.tls_packets == 0
+        assert stats.ftp_packets == 0
 
     def test_update_empty_packet(self):
         """Test updating with a completely empty/unknown packet."""
@@ -116,6 +119,51 @@ class TestPacketStatistics:
         assert stats.tcp_packets == 1
         assert stats.http_packets == 1
 
+    def test_update_tls_packet(self):
+        """Test updating with a TLS packet."""
+        stats = PacketStatistics()
+        tls_rec = TLSRecord(content_type=22, version=0x0303, length=10, payload=b"handshake")
+        tcp = TCPHeader(12345, 443, 0, 0, 5, 0x18, 65535, 0, 0)
+        eth = EthernetFrame("FF:FF:FF:FF:FF:FF", "00:00:00:00:00:00", 0x0800, b"")
+        ip = IPHeader(4,5,0,0,100,0,0,0,64,6,0,"10.0.0.1","10.0.0.2")
+        
+        packet = Packet(ethernet=eth, ip=ip, tcp=tcp, tls_record=tls_rec)
+        stats.update(packet)
+        
+        assert stats.total_packets == 1
+        assert stats.tcp_packets == 1
+        assert stats.tls_packets == 1
+
+    def test_update_ftp_packet_command(self):
+        """Test updating with an FTP command packet."""
+        stats = PacketStatistics()
+        ftp_cmd = FTPCommand(command="USER", args="admin")
+        tcp = TCPHeader(12345, 21, 0, 0, 5, 0x18, 65535, 0, 0)
+        eth = EthernetFrame("FF:FF:FF:FF:FF:FF", "00:00:00:00:00:00", 0x0800, b"")
+        ip = IPHeader(4,5,0,0,100,0,0,0,64,6,0,"10.0.0.1","10.0.0.2")
+        
+        packet = Packet(ethernet=eth, ip=ip, tcp=tcp, ftp_command=ftp_cmd)
+        stats.update(packet)
+        
+        assert stats.total_packets == 1
+        assert stats.tcp_packets == 1
+        assert stats.ftp_packets == 1
+
+    def test_update_ftp_packet_response(self):
+        """Test updating with an FTP response packet."""
+        stats = PacketStatistics()
+        ftp_resp = FTPResponse(code=220, message="Service ready")
+        tcp = TCPHeader(21, 12345, 0, 0, 5, 0x18, 65535, 0, 0)
+        eth = EthernetFrame("FF:FF:FF:FF:FF:FF", "00:00:00:00:00:00", 0x0800, b"")
+        ip = IPHeader(4,5,0,0,100,0,0,0,64,6,0,"10.0.0.1","10.0.0.2")
+        
+        packet = Packet(ethernet=eth, ip=ip, tcp=tcp, ftp_response=ftp_resp)
+        stats.update(packet)
+        
+        assert stats.total_packets == 1
+        assert stats.tcp_packets == 1
+        assert stats.ftp_packets == 1
+
     def test_report_generation(self):
         """Test that report generation returns a string with expected content."""
         stats = PacketStatistics()
@@ -135,6 +183,42 @@ class TestPacketStatistics:
         assert "-> IPv4" in report
         assert "-> TCP" in report
 
+    def test_report_generation_tls(self):
+        """Test report generation includes TLS stats."""
+        stats = PacketStatistics()
+        
+        # 1 TLS Packet
+        tls_rec = TLSRecord(22, 0x0303, 10, b"x")
+        packet = Packet(
+            ethernet=EthernetFrame("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00", 0x0800, b""),
+            ip=IPHeader(4,5,0,0,40,0,0,0,64,6,0,"10.0.0.1","10.0.0.2"),
+            tcp=TCPHeader(1234, 443, 0, 0, 5, 0, 65535, 0, 0),
+            tls_record=tls_rec
+        )
+        stats.update(packet)
+        
+        report = stats.get_report()
+        assert "-> TLS" in report
+        assert "TLS       : 1" in report
+
+    def test_report_generation_ftp(self):
+        """Test report generation includes FTP stats."""
+        stats = PacketStatistics()
+        
+        # 1 FTP Packet
+        ftp_cmd = FTPCommand("LIST", "")
+        packet = Packet(
+            ethernet=EthernetFrame("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00", 0x0800, b""),
+            ip=IPHeader(4,5,0,0,40,0,0,0,64,6,0,"10.0.0.1","10.0.0.2"),
+            tcp=TCPHeader(1234, 21, 0, 0, 5, 0, 65535, 0, 0),
+            ftp_command=ftp_cmd
+        )
+        stats.update(packet)
+        
+        report = stats.get_report()
+        assert "-> FTP" in report
+        assert "FTP       : 1" in report
+
     def test_multiple_packets(self):
         """Test stats aggregation across multiple packets."""
         stats = PacketStatistics()
@@ -149,19 +233,28 @@ class TestPacketStatistics:
                     ip=IPHeader(4,5,0,0,40,0,0,0,64,17,0,"10.0.0.1","10.0.0.2"),
                     udp=UDPHeader(53, 1234, 32, 0))
         
+        # 1 TLS
+        p3 = Packet(ethernet=EthernetFrame("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00", 0x0800, b""),
+                    ip=IPHeader(4,5,0,0,40,0,0,0,64,6,0,"10.0.0.1","10.0.0.2"),
+                    tcp=TCPHeader(1235, 443, 0, 0, 5, 0, 65535, 0, 0),
+                    tls_record=TLSRecord(22, 0x0301, 5, b"data"))
+
         # 1 Other (Ethernet only)
-        p3 = Packet(ethernet=EthernetFrame("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00", 0x0806, b""))
+        p4 = Packet(ethernet=EthernetFrame("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00", 0x0806, b""))
         
         stats.update(p1)
         stats.update(p2)
         stats.update(p3)
+        stats.update(p4)
         
-        assert stats.total_packets == 3
-        assert stats.ethernet_frames == 3
-        assert stats.ipv4_packets == 2
-        assert stats.tcp_packets == 1
+        assert stats.total_packets == 4
+        assert stats.ethernet_frames == 4
+        assert stats.ipv4_packets == 3
+        assert stats.tcp_packets == 2
         assert stats.udp_packets == 1
-        assert stats.other_protocols == 0 # p3 has Ethernet, so not 'other'
+        assert stats.tls_packets == 1
+        assert stats.ftp_packets == 0
+        assert stats.other_protocols == 0 # p4 has Ethernet, so not 'other'
         
         report = stats.get_report()
-        assert "Total Packets Captured : 3" in report
+        assert "Total Packets Captured : 4" in report

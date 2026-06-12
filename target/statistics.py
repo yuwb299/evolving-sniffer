@@ -20,6 +20,8 @@ class PacketStatistics:
     udp_packets: int = 0
     http_packets: int = 0
     dns_packets: int = 0
+    tls_packets: int = 0
+    ftp_packets: int = 0
     
     # Track other EtherTypes if desired, currently just keeping basic counters
     other_protocols: int = 0
@@ -59,6 +61,12 @@ class PacketStatistics:
         if packet.dns:
             self.dns_packets += 1
 
+        if packet.tls_record:
+            self.tls_packets += 1
+
+        if packet.ftp_command or packet.ftp_response:
+            self.ftp_packets += 1
+
     def get_report(self) -> str:
         """
         Generate a formatted text report of the captured statistics.
@@ -91,8 +99,19 @@ class PacketStatistics:
                 if self.tcp_packets > 0:
                     # HTTP usually runs over TCP
                     http_count = self.http_packets
-                    http_percent = (http_count / self.tcp_packets) * 100
-                    lines.append(f"        -> HTTP      : {http_count} ({http_percent:.1f}%)")
+                    if http_count > 0:
+                        http_percent = (http_count / self.tcp_packets) * 100
+                        lines.append(f"        -> HTTP      : {http_count} ({http_percent:.1f}%)")
+                    
+                    # TLS runs over TCP
+                    if self.tls_packets > 0:
+                        tls_percent = (self.tls_packets / self.tcp_packets) * 100
+                        lines.append(f"        -> TLS       : {self.tls_packets} ({tls_percent:.1f}%)")
+
+                    # FTP runs over TCP
+                    if self.ftp_packets > 0:
+                        ftp_percent = (self.ftp_packets / self.tcp_packets) * 100
+                        lines.append(f"        -> FTP       : {self.ftp_packets} ({ftp_percent:.1f}%)")
         
         if self.other_protocols > 0:
             lines.append(f"Other/Unknown Protocols : {self.other_protocols}")
