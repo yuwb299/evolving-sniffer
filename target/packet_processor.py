@@ -4,7 +4,7 @@ Orchestrates the parsing of raw bytes into fully populated Packet objects.
 """
 
 from typing import Optional
-from packet_structures import Packet
+from packet_structures import Packet, TLSRecord
 from ethernet_parser import parse_ethernet_frame
 from ip_parser import parse_ip_header
 from tcp_udp_parser import parse_tcp_header, parse_udp_header
