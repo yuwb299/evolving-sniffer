@@ -11,11 +11,12 @@ from tcp_udp_parser import parse_tcp_header, parse_udp_header
 from http_parser import parse_http_request, parse_http_response, is_http_payload
 from dns_parser import parse_dns_message
 from tls_parser import parse_tls_record, parse_tls_handshake
+from ftp_parser import parse_ftp_command, parse_ftp_response, is_ftp_payload
 
 
 def process_packet(raw_data: bytes) -> Packet:
     """
-    Process raw packet bytes through the parsing stack (Ethernet -> IP -> TCP/UDP -> HTTP/DNS/TLS).
+    Process raw packet bytes through the parsing stack (Ethernet -> IP -> TCP/UDP -> HTTP/DNS/TLS/FTP).
     
     Args:
         raw_data: Raw bytes captured from the network interface or pcap file.
@@ -93,6 +94,30 @@ def process_packet(raw_data: bytes) -> Packet:
                         elif tcp_header.source_port in [80, 8080, 8000] or \
                              tcp_payload.startswith(b"HTTP/"):
                             packet.http_response = parse_http_response(tcp_payload)
+
+                # 5. Parse FTP (Phase 5) if HTTP and TLS are not present
+                if not packet.tls_record and not packet.http_request and not packet.http_response:
+                    is_ftp_port = tcp_header.destination_port == 21 or tcp_header.source_port == 21
+                    
+                    if is_ftp_port or is_ftp_payload(tcp_payload):
+                        # FTP is command/response based.
+                        # If it comes from server (port 21), usually a response.
+                        # If it goes to server (port 21), usually a command.
+                        # However, we can use heuristics to determine.
+                        
+                        if tcp_header.source_port == 21:
+                            packet.ftp_response = parse_ftp_response(tcp_payload)
+                        elif tcp_header.destination_port == 21:
+                            packet.ftp_command = parse_ftp_command(tcp_payload)
+                        
+                        # Fallback heuristics if port 21 isn't used or logic is fuzzy
+                        if not packet.ftp_command and not packet.ftp_response:
+                            # Try command
+                            cmd = parse_ftp_command(tcp_payload)
+                            if cmd:
+                                packet.ftp_command = cmd
+                            else:
+                                packet.ftp_response = parse_ftp_response(tcp_payload)
                         
     elif ip_header.protocol == 17:  # UDP
         udp_header = parse_udp_header(ip_payload)

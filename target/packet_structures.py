@@ -1,6 +1,6 @@
 """
 Packet structures using dataclasses for the protocol analyzer.
-Defines the data models for Ethernet, IP, TCP, UDP, HTTP, DNS, and TLS packets.
+Defines the data models for Ethernet, IP, TCP, UDP, HTTP, DNS, TLS, and FTP packets.
 """
 
 from dataclasses import dataclass, field
@@ -300,6 +300,20 @@ class TLSHandshake:
 
 
 @dataclass
+class FTPCommand:
+    """Represents an FTP Command."""
+    command: str
+    args: str
+
+
+@dataclass
+class FTPResponse:
+    """Represents an FTP Response."""
+    code: int
+    message: str
+
+
+@dataclass
 class Packet:
     """Represents a fully parsed packet with all layers."""
     ethernet: Optional[EthernetFrame] = None
@@ -311,6 +325,8 @@ class Packet:
     dns: Optional[DNSMessage] = None
     tls_record: Optional[TLSRecord] = None
     tls_handshake: Optional[TLSHandshake] = None
+    ftp_command: Optional[FTPCommand] = None
+    ftp_response: Optional[FTPResponse] = None
     raw_data: bytes = b''
     
     @property
@@ -326,6 +342,8 @@ class Packet:
     @property
     def protocol_type(self) -> str:
         """Get the highest layer protocol type."""
+        if self.ftp_command or self.ftp_response:
+            return "FTP"
         if self.tls_handshake:
             return "TLS"
         if self.tls_record:
@@ -384,6 +402,12 @@ class Packet:
         
         if self.http_response:
             parts.append(f"HTTP Response: {self.http_response.version} {self.http_response.status_code} {self.http_response.status_text}")
+
+        if self.ftp_command:
+            parts.append(f"FTP Command: {self.ftp_command.command} {self.ftp_command.args}")
+
+        if self.ftp_response:
+            parts.append(f"FTP Response: {self.ftp_response.code} {self.ftp_response.message}")
         
         return " | ".join(parts)
     
