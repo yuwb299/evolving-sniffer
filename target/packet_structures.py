@@ -4,7 +4,7 @@ Defines the data models for Ethernet, IP, TCP, UDP, HTTP, DNS, TLS, and FTP pack
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Union
 from datetime import datetime
 
 
@@ -72,6 +72,32 @@ class IPHeader:
             return True
         except socket.error:
             return False
+
+
+@dataclass
+class IPv6Header:
+    """Represents an IPv6 header (Base header, no extension headers)."""
+    version: int
+    traffic_class: int
+    flow_label: int
+    payload_length: int
+    next_header: int
+    hop_limit: int
+    source_ip: str
+    destination_ip: str
+    
+    def __post_init__(self):
+        """Validate IPv6 header fields."""
+        if self.version != 6:
+            raise ValueError(f"Only IPv6 supported, got version {self.version}")
+        # Basic validation for IP strings (format only)
+        if ':' not in self.source_ip or ':' not in self.destination_ip:
+            raise ValueError(f"Invalid IPv6 address format")
+
+    @property
+    def protocol(self) -> int:
+        """Alias for next_header to match IPv4 API."""
+        return self.next_header
 
 
 @dataclass
@@ -318,6 +344,7 @@ class Packet:
     """Represents a fully parsed packet with all layers."""
     ethernet: Optional[EthernetFrame] = None
     ip: Optional[IPHeader] = None
+    ipv6: Optional[IPv6Header] = None
     tcp: Optional[TCPHeader] = None
     udp: Optional[UDPHeader] = None
     http_request: Optional[HTTPRequest] = None
@@ -356,8 +383,10 @@ class Packet:
             return "TCP"
         elif self.udp:
             return "UDP"
+        elif self.ipv6:
+            return "IPv6"
         elif self.ip:
-            return "IP"
+            return "IPv4"
         elif self.ethernet:
             return "Ethernet"
         return "Unknown"
@@ -369,8 +398,16 @@ class Packet:
         if self.ethernet:
             parts.append(f"Eth: {self.ethernet.source_mac} -> {self.ethernet.destination_mac}")
         
+        # Handle IPv4
         if self.ip:
             parts.append(f"IP: {self.ip.source_ip} -> {self.ip.destination_ip}")
+        
+        # Handle IPv6
+        if self.ipv6:
+            # Shorten IPv6 for display if possible
+            src = self.ipv6.source_ip
+            dst = self.ipv6.destination_ip
+            parts.append(f"IPv6: {src} -> {dst}")
         
         if self.tcp:
             parts.append(f"TCP: {self.tcp.source_port} -> {self.tcp.destination_port}")
