@@ -80,26 +80,27 @@ def parse_extensions(data: bytes) -> Tuple[Optional[str], bytes]:
         
         # SNI Extension Type is 0x0000
         if ext_type == 0x0000 and sni is None:
-            # Parse SNI
-            # SNI List Length (2 bytes)
-            # Entry Length (2 bytes)
-            # Name Type (1 byte, 0 = hostname)
-            # Name Length (2 bytes)
-            # Name Data
-            if offset + 2 <= len(data):
-                sni_list_len = struct.unpack('!H', data[offset:offset+2])[0]
-                if offset + 2 + 2 <= len(data):
-                    sni_entry_len = struct.unpack('!H', data[offset+2:offset+4])[0]
-                    if offset + 5 + 2 <= len(data):
-                        # name type (1) + name len (2)
-                        name_len = struct.unpack('!H', data[offset+5:offset+7])[0]
-                        name_start = offset + 7
-                        name_end = name_start + name_len
-                        if name_end <= len(data):
-                            try:
-                                sni = data[name_start:name_end].decode('ascii')
-                            except UnicodeDecodeError:
-                                pass # Invalid ASCII
+            # Parse SNI from the extension data
+            # Structure within SNI extension data:
+            #   SNI List Length (2 bytes)
+            #   Name Type (1 byte, 0 = hostname)
+            #   Name Length (2 bytes)
+            #   Name Data
+            ext_data_start = offset
+            if ext_data_start + 2 <= len(data):
+                sni_list_len = struct.unpack('!H', data[ext_data_start:ext_data_start+2])[0]
+                name_offset = ext_data_start + 2
+                # Name Type (1 byte)
+                if name_offset + 3 <= len(data):
+                    name_type = data[name_offset]
+                    name_len = struct.unpack('!H', data[name_offset+1:name_offset+3])[0]
+                    name_start = name_offset + 3
+                    name_end = name_start + name_len
+                    if name_end <= len(data) and name_type == 0:
+                        try:
+                            sni = data[name_start:name_end].decode('ascii')
+                        except UnicodeDecodeError:
+                            pass  # Invalid ASCII
                                 
         offset += ext_len
         
@@ -146,10 +147,16 @@ def parse_client_hello(data: bytes) -> Optional[TLSHandshake]:
         comp_len = data[offset]
         offset += 1 + comp_len
         
-        # Extensions
+        # Extensions (optional - may not be present)
+        if offset >= len(data):
+            # No extensions present - valid ClientHello
+            return TLSHandshake(
+                handshake_type=TLSHandshake.CLIENT_HELLO,
+                length=len(data),
+                payload=data,
+                sni=None
+            )
         if offset + 2 > len(data): return None
-        # We don't need to unpack ext_len to pass to parse_extensions, 
-        # parse_extensions handles the length header internally.
         ext_data = data[offset:]
         sni, _ = parse_extensions(ext_data)
         
