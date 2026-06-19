@@ -13,11 +13,12 @@ from http_parser import parse_http_request, parse_http_response, is_http_payload
 from dns_parser import parse_dns_message
 from tls_parser import parse_tls_record, parse_tls_handshake
 from ftp_parser import parse_ftp_command, parse_ftp_response, is_ftp_payload
+from ssh_parser import parse_ssh_message
 
 
 def process_packet(raw_data: bytes) -> Packet:
     """
-    Process raw packet bytes through the parsing stack (Ethernet -> IP/IPv6 -> TCP/UDP -> HTTP/DNS/TLS/FTP).
+    Process raw packet bytes through the parsing stack (Ethernet -> IP/IPv6 -> TCP/UDP -> HTTP/DNS/TLS/FTP/SSH).
     
     Args:
         raw_data: Raw bytes captured from the network interface or pcap file.
@@ -63,7 +64,7 @@ def process_packet(raw_data: bytes) -> Packet:
         
         # IPv6 header is fixed 40 bytes. Payload starts immediately.
         # Note: This does not handle extension headers.
-        if len(eth_frame.payload) < 40:
+        if len(ethernet_payload) < 40: # Typo fix in logic: eth_frame.payload
             return packet # Malformed
         ip_payload = eth_frame.payload[40:]
         
@@ -92,8 +93,16 @@ def process_packet(raw_data: bytes) -> Packet:
                     if packet.tls_record and packet.tls_record.content_type == TLSRecord.HANDSHAKE:
                         packet.tls_handshake = parse_tls_handshake(packet.tls_record.payload)
 
-                # 4. Parse HTTP (Phase 2) if TLS is not present
+                # 5. Parse SSH (Phase 6) if not TLS
                 if not packet.tls_record:
+                    is_ssh_port = tcp_header.destination_port == 22 or tcp_header.source_port == 22
+                    is_ssh_banner = tcp_payload.startswith(b"SSH-")
+                    
+                    if is_ssh_port or is_ssh_banner:
+                        packet.ssh = parse_ssh_message(tcp_payload)
+
+                # 6. Parse HTTP (Phase 2) if TLS and SSH are not present
+                if not packet.tls_record and not packet.ssh:
                     is_http_port = tcp_header.destination_port in [80, 8080, 8000] or \
                                    tcp_header.source_port in [80, 8080, 8000]
                     
@@ -106,8 +115,8 @@ def process_packet(raw_data: bytes) -> Packet:
                              tcp_payload.startswith(b"HTTP/"):
                             packet.http_response = parse_http_response(tcp_payload)
 
-                # 5. Parse FTP (Phase 5)
-                if not packet.tls_record and not packet.http_request and not packet.http_response:
+                # 7. Parse FTP (Phase 5) if other L7 protocols are not present
+                if not packet.tls_record and not packet.ssh and not packet.http_request and not packet.http_response:
                     is_ftp_port = tcp_header.destination_port == 21 or tcp_header.source_port == 21
                     
                     if is_ftp_port or is_ftp_payload(tcp_payload):

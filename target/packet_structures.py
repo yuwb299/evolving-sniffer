@@ -1,6 +1,6 @@
 """
 Packet structures using dataclasses for the protocol analyzer.
-Defines the data models for Ethernet, IP, TCP, UDP, HTTP, DNS, TLS, and FTP packets.
+Defines the data models for Ethernet, IP, TCP, UDP, HTTP, DNS, TLS, FTP, and SSH packets.
 """
 
 from dataclasses import dataclass, field
@@ -340,6 +340,24 @@ class FTPResponse:
 
 
 @dataclass
+class SSHMessage:
+    """Represents an SSH packet (Banner or Binary)."""
+    protocol_version: Optional[str] = None  # e.g., "SSH-2.0-OpenSSH"
+    packet_length: Optional[int] = None
+    padding_length: Optional[int] = None
+    message_code: Optional[int] = None
+    payload: bytes = b''
+
+    @property
+    def is_banner(self) -> bool:
+        return self.protocol_version is not None
+
+    @property
+    def is_binary_packet(self) -> bool:
+        return self.packet_length is not None
+
+
+@dataclass
 class Packet:
     """Represents a fully parsed packet with all layers."""
     ethernet: Optional[EthernetFrame] = None
@@ -354,6 +372,7 @@ class Packet:
     tls_handshake: Optional[TLSHandshake] = None
     ftp_command: Optional[FTPCommand] = None
     ftp_response: Optional[FTPResponse] = None
+    ssh: Optional[SSHMessage] = None
     raw_data: bytes = b''
     
     @property
@@ -369,6 +388,8 @@ class Packet:
     @property
     def protocol_type(self) -> str:
         """Get the highest layer protocol type."""
+        if self.ssh:
+            return "SSH"
         if self.ftp_command or self.ftp_response:
             return "FTP"
         if self.tls_handshake:
@@ -415,6 +436,12 @@ class Packet:
                 parts.append(f"Flags: {' '.join(self.tcp.flag_names)}")
         elif self.udp:
             parts.append(f"UDP: {self.udp.source_port} -> {self.udp.destination_port}")
+
+        if self.ssh:
+            if self.ssh.is_banner:
+                parts.append(f"SSH: {self.ssh.protocol_version}")
+            elif self.ssh.is_binary_packet:
+                parts.append(f"SSH: Binary Packet (Code: {self.ssh.message_code})")
 
         if self.tls_record:
             if self.tls_handshake:
