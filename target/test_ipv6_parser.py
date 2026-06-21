@@ -101,4 +101,60 @@ class TestParseIpv6Header:
 
     def test_header_too_short(self):
         """Test that headers shorter than 40 bytes return None."""
-        data = bytes
+        data = bytes([0x00] * 39)
+        result = parse_ipv6_header(data)
+        assert result is None
+    
+    def test_empty_data(self):
+        """Test that empty data returns None."""
+        result = parse_ipv6_header(b'')
+        assert result is None
+
+    def test_invalid_version(self):
+        """Test that a header with a version other than 6 returns None."""
+        # Version 4 in the top 4 bits
+        data = (
+            bytes([0x40]) +  # Ver 4
+            bytes([0x00] * 39)
+        )
+        result = parse_ipv6_header(data)
+        assert result is None
+
+    def test_next_header_icmpv6(self):
+        """Test parsing Next Header for ICMPv6 (58)."""
+        data = (
+            bytes([0x60, 0x00, 0x00, 0x00]) +
+            bytes([0x00, 0x10]) + # Length
+            bytes([0x3A]) + # Next Header: 58 (ICMPv6)
+            bytes([0x40]) +
+            bytes([0x00] * 32)
+        )
+        ip = parse_ipv6_header(data)
+        assert ip is not None
+        assert ip.next_header == 58
+
+
+class TestGetProtocolName:
+    """Tests for get_protocol_name function."""
+    
+    def test_icmpv6(self):
+        """Test protocol 58 returns 'ICMPv6'."""
+        assert get_protocol_name(58) == "ICMPv6"
+    
+    def test_tcp(self):
+        """Test protocol 6 returns 'TCP'."""
+        assert get_protocol_name(6) == "TCP"
+    
+    def test_udp(self):
+        """Test protocol 17 returns 'UDP'."""
+        assert get_protocol_name(17) == "UDP"
+    
+    def test_unknown(self):
+        """Test unknown protocol returns formatted string."""
+        result = get_protocol_name(255)
+        assert result == "Protocol-255"
+    
+    def test_zero(self):
+        """Test protocol 0 returns formatted string."""
+        result = get_protocol_name(0)
+        assert result == "Protocol-0"
