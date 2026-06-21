@@ -64,7 +64,7 @@ def process_packet(raw_data: bytes) -> Packet:
         
         # IPv6 header is fixed 40 bytes. Payload starts immediately.
         # Note: This does not handle extension headers.
-        if len(ethernet_payload) < 40: # Typo fix in logic: eth_frame.payload
+        if len(eth_frame.payload) < 40:
             return packet # Malformed
         ip_payload = eth_frame.payload[40:]
         
