@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch, call
 from io import StringIO
 
 from analyzer import AnalyzerController, main
+from packet_structures import Packet, IPHeader, TCPHeader, UDPHeader, DNSHeader, DNSMessage, DNSQuestion
 
 
 class TestAnalyzerController:
@@ -27,6 +28,7 @@ class TestAnalyzerController:
         assert ctrl.interface == "eth0"
         assert ctrl.pcap_file is None
         assert ctrl.running is True
+        assert ctrl.protocol_filter is None
 
     def test_init_valid_pcap(self):
         """Test initialization with pcap only."""
@@ -34,6 +36,12 @@ class TestAnalyzerController:
         assert ctrl.interface is None
         assert ctrl.pcap_file == "test.pcap"
         assert ctrl.running is True
+        assert ctrl.protocol_filter is None
+
+    def test_init_with_filter(self):
+        """Test initialization with a protocol filter."""
+        ctrl = AnalyzerController(interface="eth0", protocol_filter="HTTP")
+        assert ctrl.protocol_filter == "HTTP"
 
     @patch('builtins.print')
     def test_handle_signal(self, mock_print):
@@ -45,6 +53,37 @@ class TestAnalyzerController:
         
         assert ctrl.running is False
         mock_print.assert_called_with("\n[!] Stopping capture...")
+
+    def test_matches_filter_none(self):
+        """Test that _matches_filter returns True when no filter is set."""
+        ctrl = AnalyzerController(interface="eth0")
+        packet = MagicMock()
+        packet.protocol_type = "TCP"
+        assert ctrl._matches_filter(packet) is True
+
+    def test_matches_filter_positive(self):
+        """Test that _matches_filter returns True for matching protocol."""
+        ctrl = AnalyzerController(interface="eth0", protocol_filter="DNS")
+        packet = MagicMock()
+        packet.protocol_type = "DNS"
+        assert ctrl._matches_filter(packet) is True
+
+    def test_matches_filter_negative(self):
+        """Test that _matches_filter returns False for non-matching protocol."""
+        ctrl = AnalyzerController(interface="eth0", protocol_filter="HTTP")
+        packet = MagicMock()
+        packet.protocol_type = "TCP"
+        assert ctrl._matches_filter(packet) is False
+
+    def test_matches_filter_case_insensitive(self):
+        """Test that protocol filtering is case-insensitive."""
+        ctrl = AnalyzerController(interface="eth0", protocol_filter="http")
+        packet = MagicMock()
+        packet.protocol_type = "HTTP"
+        assert ctrl._matches_filter(packet) is True
+        
+        packet.protocol_type = "http"
+        assert ctrl._matches_filter(packet) is True
 
     @patch('analyzer.process_packet')
     @patch('analyzer.LiveCapture')
@@ -65,8 +104,11 @@ class TestAnalyzerController:
         # Mock process_packet to return a dummy object with a summary method
         mock_pkt_obj_1 = MagicMock()
         mock_pkt_obj_1.summary.return_value = "Summary 1"
+        mock_pkt_obj_1.protocol_type = "TCP"
+        
         mock_pkt_obj_2 = MagicMock()
         mock_pkt_obj_2.summary.return_value = "Summary 2"
+        mock_pkt_obj_2.protocol_type = "UDP"
         
         mock_process_packet.side_effect = [mock_pkt_obj_1, mock_pkt_obj_2]
         
@@ -84,6 +126,52 @@ class TestAnalyzerController:
         print_calls = [str(c) for c in mock_print.call_args_list]
         assert any("Summary 1" in c for c in print_calls)
         assert any("Summary 2" in c for c in print_calls)
+
+    @patch('analyzer.process_packet')
+    @patch('analyzer.LiveCapture')
+    @patch('builtins.print')
+    def test_live_capture_with_filter(self, mock_print, mock_live_capture_class, mock_process_packet):
+        """Test that filtering works in live capture."""
+        mock_capture_instance = MagicMock()
+        mock_live_capture_class.return_value.__enter__.return_value = mock_capture_instance
+        
+        raw_pkt_1 = b"PACKET_TCP"
+        raw_pkt_2 = b"PACKET_UDP"
+        raw_pkt_3 = b"PACKET_HTTP"
+        
+        mock_capture_instance.__next__.side_effect = [raw_pkt_1, raw_pkt_2, raw_pkt_3, RuntimeError("Done")]
+        
+        # Packet 1: TCP
+        pkt_1 = MagicMock()
+        pkt_1.summary.return_value = "TCP Packet"
+        pkt_1.protocol_type = "TCP"
+        
+        # Packet 2: UDP (Should be filtered out)
+        pkt_2 = MagicMock()
+        pkt_2.summary.return_value = "UDP Packet"
+        pkt_2.protocol_type = "UDP"
+        
+        # Packet 3: HTTP (Should be filtered out)
+        pkt_3 = MagicMock()
+        pkt_3.summary.return_value = "HTTP Packet"
+        pkt_3.protocol_type = "HTTP"
+        
+        mock_process_packet.side_effect = [pkt_1, pkt_2, pkt_3]
+        
+        # Run with TCP filter
+        ctrl = AnalyzerController(interface="eth0", protocol_filter="TCP")
+        ctrl.start_live_capture()
+        
+        print_calls = [str(c) for c in mock_print.call_args_list]
+        
+        # Check that TCP was printed
+        assert any("TCP Packet" in c for c in print_calls)
+        # Check that UDP and HTTP were NOT printed
+        assert not any("UDP Packet" in c for c in print_calls)
+        assert not any("HTTP Packet" in c for c in print_calls)
+        
+        # But check that stats were updated for all 3 packets
+        assert ctrl.stats.total_packets == 3
 
     @patch('analyzer.process_packet')
     @patch('analyzer.PcapReader')
@@ -104,6 +192,7 @@ class TestAnalyzerController:
         # Mock process_packet
         mock_pkt_obj = MagicMock()
         mock_pkt_obj.summary.return_value = "Packet Summary"
+        mock_pkt_obj.protocol_type = "IP"
         mock_process_packet.return_value = mock_pkt_obj
         
         # Run
@@ -155,7 +244,7 @@ class TestMainEntry:
         
         main()
         
-        mock_ctrl_class.assert_called_once_with(interface="eth0", pcap_file=None)
+        mock_ctrl_class.assert_called_once_with(interface="eth0", pcap_file=None, protocol_filter=None)
         mock_ctrl_instance.run.assert_called_once()
 
     @patch('sys.argv', ['analyzer.py', '-r', 'capture.pcap'])
@@ -167,7 +256,19 @@ class TestMainEntry:
         
         main()
         
-        mock_ctrl_class.assert_called_once_with(interface=None, pcap_file="capture.pcap")
+        mock_ctrl_class.assert_called_once_with(interface=None, pcap_file="capture.pcap", protocol_filter=None)
+        mock_ctrl_instance.run.assert_called_once()
+
+    @patch('sys.argv', ['analyzer.py', '-i', 'eth0', '-f', 'DNS'])
+    @patch('analyzer.AnalyzerController')
+    def test_main_filter_mode(self, mock_ctrl_class):
+        """Test main() with filter argument."""
+        mock_ctrl_instance = MagicMock()
+        mock_ctrl_class.return_value = mock_ctrl_instance
+        
+        main()
+        
+        mock_ctrl_class.assert_called_once_with(interface="eth0", pcap_file=None, protocol_filter="DNS")
         mock_ctrl_instance.run.assert_called_once()
 
     @patch('sys.argv', ['analyzer.py'])

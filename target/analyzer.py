@@ -13,6 +13,7 @@ from capture_engine import LiveCapture, CaptureError
 from pcap_reader import PcapReader, PcapReaderError
 from packet_processor import process_packet
 from statistics import PacketStatistics
+from packet_structures import Packet
 
 
 class AnalyzerController:
@@ -21,13 +22,15 @@ class AnalyzerController:
     Manages the capture loop, statistics gathering, and user display.
     """
     
-    def __init__(self, interface: Optional[str] = None, pcap_file: Optional[str] = None):
+    def __init__(self, interface: Optional[str] = None, pcap_file: Optional[str] = None, 
+                 protocol_filter: Optional[str] = None):
         """
         Initialize the controller.
         
         Args:
             interface: Network interface for live capture (Linux only).
             pcap_file: Path to a .pcap file for offline analysis.
+            protocol_filter: Optional string to filter packets by protocol type (e.g., "HTTP", "DNS").
             
         Raises:
             ValueError: If neither interface nor pcap_file is provided, or both are provided.
@@ -37,6 +40,7 @@ class AnalyzerController:
             
         self.interface = interface
         self.pcap_file = pcap_file
+        self.protocol_filter = protocol_filter
         self.running = True
         self.stats = PacketStatistics()
         
@@ -50,9 +54,30 @@ class AnalyzerController:
         print("\n[!] Stopping capture...")
         self.running = False
 
+    def _matches_filter(self, packet: Packet) -> bool:
+        """
+        Check if the packet matches the configured protocol filter.
+        
+        Args:
+            packet: The parsed Packet object.
+            
+        Returns:
+            True if the packet matches the filter or if no filter is set, False otherwise.
+        """
+        if self.protocol_filter is None:
+            return True
+            
+        # Case-insensitive comparison
+        target_proto = self.protocol_filter.upper()
+        packet_proto = packet.protocol_type.upper()
+        
+        return target_proto == packet_proto
+
     def start_live_capture(self):
         """Start live packet capture and analysis."""
         print(f"[*] Starting live capture on interface: {self.interface}")
+        if self.protocol_filter:
+            print(f"[*] Filtering for protocol: {self.protocol_filter}")
         print("[*] Press Ctrl+C to stop.")
         
         try:
@@ -68,11 +93,12 @@ class AnalyzerController:
                         # Process packet
                         packet = process_packet(raw_data)
                         
-                        # Update statistics
+                        # Update statistics (always update stats regardless of filter)
                         self.stats.update(packet)
                         
-                        # Display summary
-                        self._display_packet(packet)
+                        # Display summary if matches filter
+                        if self._matches_filter(packet):
+                            self._display_packet(packet)
                         
                     except CaptureError as e:
                         print(f"[!] Error capturing packet: {e}", file=sys.stderr)
@@ -94,23 +120,32 @@ class AnalyzerController:
     def start_pcap_analysis(self):
         """Start offline PCAP file analysis."""
         print(f"[*] Analyzing PCAP file: {self.pcap_file}")
+        if self.protocol_filter:
+            print(f"[*] Filtering for protocol: {self.protocol_filter}")
         print("-" * 80)
         
         try:
             with PcapReader(self.pcap_file) as reader:
                 packet_count = 0
+                displayed_count = 0
                 for raw_data in reader:
                     if not self.running:
                         break
                         
                     packet = process_packet(raw_data)
                     self.stats.update(packet)
-                    self._display_packet(packet)
+                    
+                    if self._matches_filter(packet):
+                        self._display_packet(packet)
+                        displayed_count += 1
+                    
                     packet_count += 1
                 
                 # Display statistics
                 print(self.stats.get_report())
                 print(f"[*] Analysis complete. Total packets processed: {packet_count}")
+                if self.protocol_filter:
+                    print(f"[*] Packets matching filter '{self.protocol_filter}': {displayed_count}")
                 
         except FileNotFoundError:
             print(f"[!] File not found: {self.pcap_file}", file=sys.stderr)
@@ -153,12 +188,19 @@ def main():
         help="Read packets from a PCAP file."
     )
     
+    parser.add_argument(
+        "-f", "--filter",
+        dest="protocol_filter",
+        help="Filter output by specific protocol name (e.g., HTTP, DNS, TCP, TLS)."
+    )
+    
     args = parser.parse_args()
     
     try:
         controller = AnalyzerController(
             interface=args.interface,
-            pcap_file=args.read_file
+            pcap_file=args.read_file,
+            protocol_filter=args.protocol_filter
         )
         controller.run()
     except ValueError as e:
