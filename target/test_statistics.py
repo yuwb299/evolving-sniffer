@@ -5,7 +5,7 @@ Tests for statistics module.
 import pytest
 from packet_structures import (
     Packet, EthernetFrame, IPHeader, TCPHeader, UDPHeader, HTTPRequest, HTTPResponse,
-    TLSRecord, TLSHandshake, FTPCommand, FTPResponse
+    TLSRecord, TLSHandshake, FTPCommand, FTPResponse, SSHMessage
 )
 from statistics import PacketStatistics
 
@@ -21,6 +21,7 @@ class TestPacketStatistics:
         assert stats.tcp_packets == 0
         assert stats.tls_packets == 0
         assert stats.ftp_packets == 0
+        assert stats.ssh_packets == 0
 
     def test_update_empty_packet(self):
         """Test updating with a completely empty/unknown packet."""
@@ -164,6 +165,35 @@ class TestPacketStatistics:
         assert stats.tcp_packets == 1
         assert stats.ftp_packets == 1
 
+    def test_update_ssh_packet_banner(self):
+        """Test updating with an SSH Banner packet."""
+        stats = PacketStatistics()
+        ssh_msg = SSHMessage(protocol_version="SSH-2.0-OpenSSH_8.9")
+        tcp = TCPHeader(12345, 22, 0, 0, 5, 0x18, 65535, 0, 0)
+        eth = EthernetFrame("FF:FF:FF:FF:FF:FF", "00:00:00:00:00:00", 0x0800, b"")
+        ip = IPHeader(4,5,0,0,100,0,0,0,64,6,0,"10.0.0.1","10.0.0.2")
+        
+        packet = Packet(ethernet=eth, ip=ip, tcp=tcp, ssh=ssh_msg)
+        stats.update(packet)
+        
+        assert stats.total_packets == 1
+        assert stats.tcp_packets == 1
+        assert stats.ssh_packets == 1
+
+    def test_update_ssh_packet_binary(self):
+        """Test updating with an SSH Binary packet."""
+        stats = PacketStatistics()
+        ssh_msg = SSHMessage(packet_length=100, padding_length=10, message_code=5, payload=b"data")
+        tcp = TCPHeader(22, 12345, 0, 0, 5, 0x18, 65535, 0, 0)
+        eth = EthernetFrame("FF:FF:FF:FF:FF:FF", "00:00:00:00:00:00", 0x0800, b"")
+        ip = IPHeader(4,5,0,0,100,0,0,0,64,6,0,"10.0.0.1","10.0.0.2")
+        
+        packet = Packet(ethernet=eth, ip=ip, tcp=tcp, ssh=ssh_msg)
+        stats.update(packet)
+        
+        assert stats.total_packets == 1
+        assert stats.ssh_packets == 1
+
     def test_report_generation(self):
         """Test that report generation returns a string with expected content."""
         stats = PacketStatistics()
@@ -219,6 +249,24 @@ class TestPacketStatistics:
         assert "-> FTP" in report
         assert "FTP       : 1" in report
 
+    def test_report_generation_ssh(self):
+        """Test report generation includes SSH stats."""
+        stats = PacketStatistics()
+        
+        # 1 SSH Packet
+        ssh_msg = SSHMessage(protocol_version="SSH-2.0-Test")
+        packet = Packet(
+            ethernet=EthernetFrame("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00", 0x0800, b""),
+            ip=IPHeader(4,5,0,0,40,0,0,0,64,6,0,"10.0.0.1","10.0.0.2"),
+            tcp=TCPHeader(1234, 22, 0, 0, 5, 0, 65535, 0, 0),
+            ssh=ssh_msg
+        )
+        stats.update(packet)
+        
+        report = stats.get_report()
+        assert "-> SSH" in report
+        assert "SSH       : 1" in report
+
     def test_multiple_packets(self):
         """Test stats aggregation across multiple packets."""
         stats = PacketStatistics()
@@ -239,22 +287,30 @@ class TestPacketStatistics:
                     tcp=TCPHeader(1235, 443, 0, 0, 5, 0, 65535, 0, 0),
                     tls_record=TLSRecord(22, 0x0301, 5, b"data"))
 
+        # 1 SSH
+        p4 = Packet(ethernet=EthernetFrame("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00", 0x0800, b""),
+                    ip=IPHeader(4,5,0,0,40,0,0,0,64,6,0,"10.0.0.1","10.0.0.2"),
+                    tcp=TCPHeader(1236, 22, 0, 0, 5, 0, 65535, 0, 0),
+                    ssh=SSHMessage(protocol_version="SSH-2.0"))
+
         # 1 Other (Ethernet only)
-        p4 = Packet(ethernet=EthernetFrame("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00", 0x0806, b""))
+        p5 = Packet(ethernet=EthernetFrame("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00", 0x0806, b""))
         
         stats.update(p1)
         stats.update(p2)
         stats.update(p3)
         stats.update(p4)
+        stats.update(p5)
         
-        assert stats.total_packets == 4
-        assert stats.ethernet_frames == 4
-        assert stats.ipv4_packets == 3
-        assert stats.tcp_packets == 2
+        assert stats.total_packets == 5
+        assert stats.ethernet_frames == 5
+        assert stats.ipv4_packets == 4
+        assert stats.tcp_packets == 3
         assert stats.udp_packets == 1
         assert stats.tls_packets == 1
         assert stats.ftp_packets == 0
-        assert stats.other_protocols == 0 # p4 has Ethernet, so not 'other'
+        assert stats.ssh_packets == 1
+        assert stats.other_protocols == 0 # p5 has Ethernet, so not 'other'
         
         report = stats.get_report()
-        assert "Total Packets Captured : 4" in report
+        assert "Total Packets Captured : 5" in report

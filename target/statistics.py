@@ -23,6 +23,7 @@ class PacketStatistics:
     dns_packets: int = 0
     tls_packets: int = 0
     ftp_packets: int = 0
+    ssh_packets: int = 0
     
     # Track other EtherTypes if desired, currently just keeping basic counters
     other_protocols: int = 0
@@ -69,6 +70,9 @@ class PacketStatistics:
         if packet.ftp_command or packet.ftp_response:
             self.ftp_packets += 1
 
+        if packet.ssh:
+            self.ssh_packets += 1
+
     def get_report(self) -> str:
         """
         Generate a formatted text report of the captured statistics.
@@ -108,6 +112,10 @@ class PacketStatistics:
                         http_percent = (http_count / self.tcp_packets) * 100
                         lines.append(f"        -> HTTP      : {http_count} ({http_percent:.1f}%)")
                     
+                    if self.ssh_packets > 0:
+                        ssh_percent = (self.ssh_packets / self.tcp_packets) * 100
+                        lines.append(f"        -> SSH       : {self.ssh_packets} ({ssh_percent:.1f}%)")
+
                     if self.tls_packets > 0:
                         tls_percent = (self.tls_packets / self.tcp_packets) * 100
                         lines.append(f"        -> TLS       : {self.tls_packets} ({tls_percent:.1f}%)")
