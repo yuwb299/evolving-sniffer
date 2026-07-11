@@ -194,7 +194,7 @@ class TestParseTlsHandshake:
 
 
 class TestFullStack:
-    """Test full TLS record → handshake → SNI extraction."""
+    """Test full TLS record -> handshake -> SNI extraction."""
 
     def test_full_client_hello_over_wire(self):
         """Build a complete TLS ClientHello wrapped in a record."""

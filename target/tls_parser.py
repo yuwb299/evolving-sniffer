@@ -32,12 +32,10 @@ def parse_tls_record(data: bytes) -> Optional[TLSRecord]:
         version = struct.unpack('!H', data[1:3])[0]
         length = struct.unpack('!H', data[3:5])[0]
         
-        if length > len(data) - 5:
-            # Payload claims to be longer than available data
-            # We can still return the header, but payload will be truncated
-            payload = data[5:]
-        else:
-            payload = data[5:5+length]
+        # Ensure we don't go out of bounds, though truncated payloads are possible in capture
+        available_payload_len = len(data) - 5
+        payload_len = min(length, available_payload_len)
+        payload = data[5:5+payload_len]
             
         return TLSRecord(
             content_type=content_type,
@@ -100,7 +98,7 @@ def parse_extensions(data: bytes) -> Tuple[Optional[str], bytes]:
                         try:
                             sni = data[name_start:name_end].decode('ascii')
                         except UnicodeDecodeError:
-                            pass  # Invalid ASCII
+                            pass  # Invalid ASCII, ignore
                                 
         offset += ext_len
         
@@ -125,7 +123,8 @@ def parse_client_hello(data: bytes) -> Optional[TLSHandshake]:
     # Compression Methods (1 len + data)
     # Extensions (2 len + data)
     
-    if len(data) < 38: # 2 (ver) + 32 (random) + 1 (sid len) + 2 (cipher len) + 1 (comp len) + 2 (ext len)
+    # Minimal check for version + random + session_id_len
+    if len(data) < 38:
         return None
         
     try:
@@ -133,35 +132,33 @@ def parse_client_hello(data: bytes) -> Optional[TLSHandshake]:
         offset = 34
         
         # Session ID
-        if offset >= len(data): return None
+        if offset >= len(data): 
+            return None
         sid_len = data[offset]
         offset += 1 + sid_len
         
         # Cipher Suites
-        if offset + 2 > len(data): return None
+        if offset + 2 > len(data): 
+            return None
         cipher_len = struct.unpack('!H', data[offset:offset+2])[0]
         offset += 2 + cipher_len
         
         # Compression Methods
-        if offset >= len(data): return None
+        if offset >= len(data): 
+            return None
         comp_len = data[offset]
         offset += 1 + comp_len
         
         # Extensions (optional - may not be present)
-        if offset >= len(data):
-            # No extensions present - valid ClientHello
-            return TLSHandshake(
-                handshake_type=TLSHandshake.CLIENT_HELLO,
-                length=len(data),
-                payload=data,
-                sni=None
-            )
-        if offset + 2 > len(data): return None
-        ext_data = data[offset:]
-        sni, _ = parse_extensions(ext_data)
+        sni = None
+        if offset < len(data):
+            if offset + 2 > len(data): 
+                return None
+            # We don't strictly need to check the extensions length against the packet 
+            # because parse_extensions does bounds checking, but we need to pass the slice.
+            ext_data = data[offset:]
+            sni, _ = parse_extensions(ext_data)
         
-        # We reconstruct the handshake object with the original payload length
-        # The payload passed here is the body of the handshake, not including the 4-byte header
         return TLSHandshake(
             handshake_type=TLSHandshake.CLIENT_HELLO,
             length=len(data),
@@ -198,11 +195,10 @@ def parse_tls_handshake(data: bytes) -> Optional[TLSHandshake]:
             payload=payload
         )
         
-        # If ClientHello, try to parse deeper
+        # If ClientHello, try to parse deeper for SNI
         if msg_type == TLSHandshake.CLIENT_HELLO:
             client_hello = parse_client_hello(payload)
             if client_hello:
-                # Merge SNI info
                 handshake.sni = client_hello.sni
                 
         return handshake
