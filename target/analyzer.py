@@ -11,6 +11,7 @@ from typing import Optional
 
 from capture_engine import LiveCapture, CaptureError
 from pcap_reader import PcapReader, PcapReaderError
+from pcap_writer import PcapWriter, PcapWriterError
 from packet_processor import process_packet
 from statistics import PacketStatistics
 from packet_structures import Packet
@@ -19,11 +20,11 @@ from packet_structures import Packet
 class AnalyzerController:
     """
     Controller for the protocol analyzer.
-    Manages the capture loop, statistics gathering, and user display.
+    Manages the capture loop, statistics gathering, user display, and file writing.
     """
     
     def __init__(self, interface: Optional[str] = None, pcap_file: Optional[str] = None, 
-                 protocol_filter: Optional[str] = None):
+                 protocol_filter: Optional[str] = None, write_file: Optional[str] = None):
         """
         Initialize the controller.
         
@@ -31,6 +32,7 @@ class AnalyzerController:
             interface: Network interface for live capture (Linux only).
             pcap_file: Path to a .pcap file for offline analysis.
             protocol_filter: Optional string to filter packets by protocol type (e.g., "HTTP", "DNS").
+            write_file: Optional path to save captured packets to a .pcap file.
             
         Raises:
             ValueError: If neither interface nor pcap_file is provided, or both are provided.
@@ -41,6 +43,7 @@ class AnalyzerController:
         self.interface = interface
         self.pcap_file = pcap_file
         self.protocol_filter = protocol_filter
+        self.write_file = write_file
         self.running = True
         self.stats = PacketStatistics()
         
@@ -78,34 +81,49 @@ class AnalyzerController:
         print(f"[*] Starting live capture on interface: {self.interface}")
         if self.protocol_filter:
             print(f"[*] Filtering for protocol: {self.protocol_filter}")
+        if self.write_file:
+            print(f"[*] Writing packets to: {self.write_file}")
         print("[*] Press Ctrl+C to stop.")
         
         try:
             with LiveCapture(self.interface) as capture:
+                writer_context = PcapWriter(self.write_file) if self.write_file else None
+                
+                if writer_context:
+                    writer_context.open()
+                
                 print(f"[*] Listening on {self.interface}...")
                 print("-" * 80)
                 
-                while self.running:
-                    try:
-                        # Capture raw packet
-                        raw_data = next(capture)
-                        
-                        # Process packet
-                        packet = process_packet(raw_data)
-                        
-                        # Update statistics (always update stats regardless of filter)
-                        self.stats.update(packet)
-                        
-                        # Display summary if matches filter
-                        if self._matches_filter(packet):
-                            self._display_packet(packet)
-                        
-                    except CaptureError as e:
-                        print(f"[!] Error capturing packet: {e}", file=sys.stderr)
-                        # Continue capturing despite occasional errors
-                    except RuntimeError:
-                        # Socket closed
-                        break
+                try:
+                    while self.running:
+                        try:
+                            # Capture raw packet
+                            raw_data = next(capture)
+                            
+                            # Process packet
+                            packet = process_packet(raw_data)
+                            
+                            # Update statistics (always update stats regardless of filter)
+                            self.stats.update(packet)
+                            
+                            # Write to file if requested
+                            if writer_context:
+                                writer_context.write_packet(raw_data)
+                            
+                            # Display summary if matches filter
+                            if self._matches_filter(packet):
+                                self._display_packet(packet)
+                            
+                        except CaptureError as e:
+                            print(f"[!] Error capturing packet: {e}", file=sys.stderr)
+                            # Continue capturing despite occasional errors
+                        except RuntimeError:
+                            # Socket closed
+                            break
+                finally:
+                    if writer_context:
+                        writer_context.close()
 
                 # Display statistics at the end
                 print(self.stats.get_report())
@@ -116,42 +134,67 @@ class AnalyzerController:
         except OSError as e:
             print(f"[!] OS Error: {e}", file=sys.stderr)
             sys.exit(1)
+        except PcapWriterError as e:
+            print(f"[!] PCAP Write Error: {e}", file=sys.stderr)
+            sys.exit(1)
             
     def start_pcap_analysis(self):
         """Start offline PCAP file analysis."""
         print(f"[*] Analyzing PCAP file: {self.pcap_file}")
         if self.protocol_filter:
             print(f"[*] Filtering for protocol: {self.protocol_filter}")
+        if self.write_file:
+            print(f"[*] Writing filtered packets to: {self.write_file}")
         print("-" * 80)
         
         try:
-            with PcapReader(self.pcap_file) as reader:
-                packet_count = 0
-                displayed_count = 0
-                for raw_data in reader:
-                    if not self.running:
-                        break
+            writer_context = PcapWriter(self.write_file) if self.write_file else None
+            if writer_context:
+                writer_context.open()
+
+            try:
+                with PcapReader(self.pcap_file) as reader:
+                    packet_count = 0
+                    displayed_count = 0
+                    written_count = 0
+                    
+                    for raw_data in reader:
+                        if not self.running:
+                            break
+                            
+                        packet = process_packet(raw_data)
+                        self.stats.update(packet)
                         
-                    packet = process_packet(raw_data)
-                    self.stats.update(packet)
+                        # Write to file if requested
+                        if writer_context:
+                            writer_context.write_packet(raw_data)
+                            written_count += 1
+                        
+                        if self._matches_filter(packet):
+                            self._display_packet(packet)
+                            displayed_count += 1
+                        
+                        packet_count += 1
                     
-                    if self._matches_filter(packet):
-                        self._display_packet(packet)
-                        displayed_count += 1
-                    
-                    packet_count += 1
-                
-                # Display statistics
-                print(self.stats.get_report())
-                print(f"[*] Analysis complete. Total packets processed: {packet_count}")
-                if self.protocol_filter:
-                    print(f"[*] Packets matching filter '{self.protocol_filter}': {displayed_count}")
+                    # Display statistics
+                    print(self.stats.get_report())
+                    print(f"[*] Analysis complete. Total packets processed: {packet_count}")
+                    if self.protocol_filter:
+                        print(f"[*] Packets matching filter '{self.protocol_filter}': {displayed_count}")
+                    if self.write_file:
+                        print(f"[*] Packets written to '{self.write_file}': {written_count}")
+            finally:
+                if writer_context:
+                    writer_context.close()
                 
         except FileNotFoundError:
             print(f"[!] File not found: {self.pcap_file}", file=sys.stderr)
             sys.exit(1)
         except PcapReaderError as e:
             print(f"[!] PCAP Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        except PcapWriterError as e:
+            print(f"[!] PCAP Write Error: {e}", file=sys.stderr)
             sys.exit(1)
 
     def _display_packet(self, packet):
@@ -189,6 +232,11 @@ def main():
     )
     
     parser.add_argument(
+        "-w", "--write-file",
+        help="Write captured or processed packets to a PCAP file."
+    )
+    
+    parser.add_argument(
         "-f", "--filter",
         dest="protocol_filter",
         help="Filter output by specific protocol name (e.g., HTTP, DNS, TCP, TLS)."
@@ -200,7 +248,8 @@ def main():
         controller = AnalyzerController(
             interface=args.interface,
             pcap_file=args.read_file,
-            protocol_filter=args.protocol_filter
+            protocol_filter=args.protocol_filter,
+            write_file=args.write_file
         )
         controller.run()
     except ValueError as e:

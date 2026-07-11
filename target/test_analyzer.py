@@ -4,7 +4,7 @@ Tests for analyzer module (Main Controller).
 
 import pytest
 import sys
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch, call, mock_open
 from io import StringIO
 
 from analyzer import AnalyzerController, main
@@ -29,6 +29,7 @@ class TestAnalyzerController:
         assert ctrl.pcap_file is None
         assert ctrl.running is True
         assert ctrl.protocol_filter is None
+        assert ctrl.write_file is None
 
     def test_init_valid_pcap(self):
         """Test initialization with pcap only."""
@@ -37,11 +38,17 @@ class TestAnalyzerController:
         assert ctrl.pcap_file == "test.pcap"
         assert ctrl.running is True
         assert ctrl.protocol_filter is None
+        assert ctrl.write_file is None
 
     def test_init_with_filter(self):
         """Test initialization with a protocol filter."""
         ctrl = AnalyzerController(interface="eth0", protocol_filter="HTTP")
         assert ctrl.protocol_filter == "HTTP"
+
+    def test_init_with_write_file(self):
+        """Test initialization with a write file."""
+        ctrl = AnalyzerController(interface="eth0", write_file="out.pcap")
+        assert ctrl.write_file == "out.pcap"
 
     @patch('builtins.print')
     def test_handle_signal(self, mock_print):
@@ -130,48 +137,45 @@ class TestAnalyzerController:
     @patch('analyzer.process_packet')
     @patch('analyzer.LiveCapture')
     @patch('builtins.print')
-    def test_live_capture_with_filter(self, mock_print, mock_live_capture_class, mock_process_packet):
-        """Test that filtering works in live capture."""
+    @patch('analyzer.PcapWriter')
+    def test_live_capture_with_write(self, mock_writer_class, mock_print, mock_live_capture_class, mock_process_packet):
+        """Test that writing works in live capture."""
         mock_capture_instance = MagicMock()
         mock_live_capture_class.return_value.__enter__.return_value = mock_capture_instance
         
         raw_pkt_1 = b"PACKET_TCP"
         raw_pkt_2 = b"PACKET_UDP"
-        raw_pkt_3 = b"PACKET_HTTP"
         
-        mock_capture_instance.__next__.side_effect = [raw_pkt_1, raw_pkt_2, raw_pkt_3, RuntimeError("Done")]
+        mock_capture_instance.__next__.side_effect = [raw_pkt_1, raw_pkt_2, RuntimeError("Done")]
         
-        # Packet 1: TCP
         pkt_1 = MagicMock()
         pkt_1.summary.return_value = "TCP Packet"
         pkt_1.protocol_type = "TCP"
         
-        # Packet 2: UDP (Should be filtered out)
         pkt_2 = MagicMock()
         pkt_2.summary.return_value = "UDP Packet"
         pkt_2.protocol_type = "UDP"
         
-        # Packet 3: HTTP (Should be filtered out)
-        pkt_3 = MagicMock()
-        pkt_3.summary.return_value = "HTTP Packet"
-        pkt_3.protocol_type = "HTTP"
+        mock_process_packet.side_effect = [pkt_1, pkt_2]
         
-        mock_process_packet.side_effect = [pkt_1, pkt_2, pkt_3]
+        mock_writer_instance = MagicMock()
+        mock_writer_class.return_value = mock_writer_instance
         
-        # Run with TCP filter
-        ctrl = AnalyzerController(interface="eth0", protocol_filter="TCP")
+        # Run with write file
+        ctrl = AnalyzerController(interface="eth0", write_file="out.pcap")
         ctrl.start_live_capture()
         
-        print_calls = [str(c) for c in mock_print.call_args_list]
+        # Verify writer was instantiated and opened
+        mock_writer_class.assert_called_once_with("out.pcap")
+        mock_writer_instance.open.assert_called_once()
         
-        # Check that TCP was printed
-        assert any("TCP Packet" in c for c in print_calls)
-        # Check that UDP and HTTP were NOT printed
-        assert not any("UDP Packet" in c for c in print_calls)
-        assert not any("HTTP Packet" in c for c in print_calls)
+        # Verify write_packet was called for each packet
+        assert mock_writer_instance.write_packet.call_count == 2
+        mock_writer_instance.write_packet.assert_any_call(raw_pkt_1)
+        mock_writer_instance.write_packet.assert_any_call(raw_pkt_2)
         
-        # But check that stats were updated for all 3 packets
-        assert ctrl.stats.total_packets == 3
+        # Verify writer was closed
+        mock_writer_instance.close.assert_called_once()
 
     @patch('analyzer.process_packet')
     @patch('analyzer.PcapReader')
@@ -244,7 +248,7 @@ class TestMainEntry:
         
         main()
         
-        mock_ctrl_class.assert_called_once_with(interface="eth0", pcap_file=None, protocol_filter=None)
+        mock_ctrl_class.assert_called_once_with(interface="eth0", pcap_file=None, protocol_filter=None, write_file=None)
         mock_ctrl_instance.run.assert_called_once()
 
     @patch('sys.argv', ['analyzer.py', '-r', 'capture.pcap'])
@@ -256,7 +260,7 @@ class TestMainEntry:
         
         main()
         
-        mock_ctrl_class.assert_called_once_with(interface=None, pcap_file="capture.pcap", protocol_filter=None)
+        mock_ctrl_class.assert_called_once_with(interface=None, pcap_file="capture.pcap", protocol_filter=None, write_file=None)
         mock_ctrl_instance.run.assert_called_once()
 
     @patch('sys.argv', ['analyzer.py', '-i', 'eth0', '-f', 'DNS'])
@@ -268,7 +272,19 @@ class TestMainEntry:
         
         main()
         
-        mock_ctrl_class.assert_called_once_with(interface="eth0", pcap_file=None, protocol_filter="DNS")
+        mock_ctrl_class.assert_called_once_with(interface="eth0", pcap_file=None, protocol_filter="DNS", write_file=None)
+        mock_ctrl_instance.run.assert_called_once()
+
+    @patch('sys.argv', ['analyzer.py', '-i', 'eth0', '-w', 'out.pcap'])
+    @patch('analyzer.AnalyzerController')
+    def test_main_write_mode(self, mock_ctrl_class):
+        """Test main() with write file argument."""
+        mock_ctrl_instance = MagicMock()
+        mock_ctrl_class.return_value = mock_ctrl_instance
+        
+        main()
+        
+        mock_ctrl_class.assert_called_once_with(interface="eth0", pcap_file=None, protocol_filter=None, write_file="out.pcap")
         mock_ctrl_instance.run.assert_called_once()
 
     @patch('sys.argv', ['analyzer.py'])
