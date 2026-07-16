@@ -32,7 +32,8 @@ def parse_tls_record(data: bytes) -> Optional[TLSRecord]:
         version = struct.unpack('!H', data[1:3])[0]
         length = struct.unpack('!H', data[3:5])[0]
         
-        # Ensure we don't go out of bounds, though truncated payloads are possible in capture
+        # Payload follows header. 
+        # If the available data is shorter than length, we just take what we have (truncated capture)
         available_payload_len = len(data) - 5
         payload_len = min(length, available_payload_len)
         payload = data[5:5+payload_len]
@@ -67,6 +68,8 @@ def parse_extensions(data: bytes) -> Tuple[Optional[str], bytes]:
     offset = 2
     sni = None
     
+    # Loop through extensions
+    # Format: Type(2) | Length(2) | Data(Length)
     while offset < 2 + extensions_length:
         if offset + 4 > len(data):
             break
@@ -79,21 +82,23 @@ def parse_extensions(data: bytes) -> Tuple[Optional[str], bytes]:
         # SNI Extension Type is 0x0000
         if ext_type == 0x0000 and sni is None:
             # Parse SNI from the extension data
-            # Structure within SNI extension data:
-            #   SNI List Length (2 bytes)
-            #   Name Type (1 byte, 0 = hostname)
+            # SNI Extension Data:
+            #   List Length (2 bytes)
+            #   Entry Type (1 byte, 0 = hostname)
             #   Name Length (2 bytes)
             #   Name Data
             ext_data_start = offset
             if ext_data_start + 2 <= len(data):
                 sni_list_len = struct.unpack('!H', data[ext_data_start:ext_data_start+2])[0]
                 name_offset = ext_data_start + 2
-                # Name Type (1 byte)
+                
                 if name_offset + 3 <= len(data):
+                    # Entry Type (1 byte)
                     name_type = data[name_offset]
                     name_len = struct.unpack('!H', data[name_offset+1:name_offset+3])[0]
                     name_start = name_offset + 3
                     name_end = name_start + name_len
+                    
                     if name_end <= len(data) and name_type == 0:
                         try:
                             sni = data[name_start:name_end].decode('ascii')
@@ -154,8 +159,7 @@ def parse_client_hello(data: bytes) -> Optional[TLSHandshake]:
         if offset < len(data):
             if offset + 2 > len(data): 
                 return None
-            # We don't strictly need to check the extensions length against the packet 
-            # because parse_extensions does bounds checking, but we need to pass the slice.
+            # The data from here onwards is the extensions block
             ext_data = data[offset:]
             sni, _ = parse_extensions(ext_data)
         
