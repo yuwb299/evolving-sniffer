@@ -53,7 +53,7 @@ def parse_extensions(data: bytes) -> Tuple[Optional[str], bytes]:
     Parse TLS Extensions block to find Server Name Indication (SNI).
     
     Args:
-        data: Bytes of the extensions block.
+        data: Bytes of the extensions block (including the 2-byte length prefix).
         
     Returns:
         Tuple of (SNI string or None, remaining bytes).
